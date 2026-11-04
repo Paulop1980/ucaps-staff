@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#00539f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="UCAPS Staff">
+<title>UCAPS Staff</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Public+Sans:wght@400;500;600;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<!--
+  UCAPS Staff — phone app for scheduled staff (enforcement, ambassadors, work-study, window staff).
+  Same Supabase project as ucaps-parking-ops.html. Requires scheduling_migration.sql.
+
+  Sign-in is a one-time code emailed to the address on the staff list (Parking Ops → Schedule → Staff).
+  Supabase setup (one time):
+    • Authentication → Sign In / Providers: Email enabled; "Allow new users to sign up" OFF.
+      Accounts are created only when a manager adds someone in Parking Ops (Edge Function staff-accounts).
+    • Authentication → Emails → "Magic Link" AND "Confirm signup" templates: include {{ .Token }}
+      so the email shows a code instead of (or as well as) a link.
+    • Authentication → Emails → SMTP Settings: a real mail server (Supabase's built-in sender only
+      delivers to your own team's addresses and a couple of emails per hour).
+-->
+<style>
+  :root{
+    --bg:#eef1f5; --surface:#fff; --surface-2:#f6f8fa; --ink:#12181f; --ink-soft:#4d5967; --line:#d7dde5;
+    --accent:#00539f; --accent-ink:#fff; --accent-soft:#dbe8f7; --accent-soft-ink:#00396f;
+    --ok:#1f7a4d; --ok-bg:#e3f5ea; --ok-line:#bfe4cf; --warn:#93590a; --warn-bg:#fbedd3; --warn-line:#edd39a;
+    --crit:#b3261e; --crit-bg:#fbe4e2; --crit-line:#f0bcb7;
+    --font-display:'Barlow Semi Condensed',system-ui,sans-serif; --font-body:'Public Sans',system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){ :root{
+    --bg:#0d1117; --surface:#161b22; --surface-2:#1c222b; --ink:#e6e9ef; --ink-soft:#9aa5b1; --line:#2a3038;
+    --accent:#5b9bd8; --accent-ink:#0d1117; --accent-soft:#1c2c3d; --accent-soft-ink:#a9cdf0;
+    --ok:#5fcf95; --ok-bg:#123424; --ok-line:#1f5c3d; --warn:#e3b04f; --warn-bg:#3a2c0f; --warn-line:#6b4e15;
+    --crit:#f28b84; --crit-bg:#3a1815; --crit-line:#6e2b25; } }
+  *{box-sizing:border-box;}
+  html,body{margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 var(--font-body); -webkit-text-size-adjust:100%;}
+  button,input,select,textarea{font:inherit; color:inherit;}
+  .hidden{display:none !important;}
+  header.top{background:var(--accent); color:var(--accent-ink); padding:calc(10px + env(safe-area-inset-top)) 16px 10px; display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:5;}
+  header.top h1{font:700 19px var(--font-display); margin:0; letter-spacing:.02em; flex:1;}
+  header.top .who{font-size:12.5px; opacity:.9; text-align:right;}
+  header.top button{background:transparent; border:1px solid currentColor; color:inherit; border-radius:6px; padding:3px 8px; font-size:12px; cursor:pointer; opacity:.9;}
+  main{max-width:560px; margin:0 auto; padding:14px 14px calc(84px + env(safe-area-inset-bottom));}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;}
+  .card h2{font:700 17px var(--font-display); margin:0 0 6px; letter-spacing:.02em;}
+  .card h3{font:700 15px var(--font-display); margin:12px 0 4px;}
+  .hint{color:var(--ink-soft); font-size:13px;}
+  label{display:block; font-size:12.5px; font-weight:600; color:var(--ink-soft); margin:0 0 4px;}
+  input,select,textarea{width:100%; border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:10px 11px; font-size:16px;}
+  textarea{min-height:70px;}
+  .field{margin-bottom:12px;}
+  .row{display:flex; gap:10px;} .row > *{flex:1; min-width:0;}
+  .btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--line); background:var(--surface); border-radius:8px; padding:10px 14px; font-weight:600; cursor:pointer;}
+  .btn.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent);}
+  .btn.block{width:100%;}
+  .btn.small{padding:5px 10px; font-size:13px;}
+  .btn.ghost{background:transparent;}
+  .btn:disabled{opacity:.55; cursor:default;}
+  .linklike{border:0; background:none; color:var(--accent); text-decoration:underline; cursor:pointer; padding:0;}
+  .clockbtn{width:100%; border:0; border-radius:14px; padding:20px; font:700 22px var(--font-display); letter-spacing:.03em; cursor:pointer; color:#fff;}
+  .clockbtn.in{background:#1f7a4d;} .clockbtn.out{background:#b3261e;}
+  .clockbtn:disabled{opacity:.6;}
+  .big{font:700 28px var(--font-display); letter-spacing:.01em;}
+  .callout{border-radius:8px; padding:9px 12px; font-size:14px; margin:8px 0; border:1px solid;}
+  .callout.warn{background:var(--warn-bg); color:var(--warn); border-color:var(--warn-line);}
+  .callout.crit{background:var(--crit-bg); color:var(--crit); border-color:var(--crit-line);}
+  .callout.ok{background:var(--ok-bg); color:var(--ok); border-color:var(--ok-line);}
+  .callout.info{background:var(--surface-2); color:var(--ink); border-color:var(--line);}
+  .pill{display:inline-block; font-size:11.5px; font-weight:700; padding:2px 8px; border-radius:999px; text-transform:uppercase; letter-spacing:.02em;}
+  .pill.ok{background:var(--ok-bg); color:var(--ok);} .pill.warn{background:var(--warn-bg); color:var(--warn);} .pill.crit{background:var(--crit-bg); color:var(--crit);} .pill.blue{background:var(--accent-soft); color:var(--accent-soft-ink);} .pill.gray{background:var(--surface-2); color:var(--ink-soft);}
+  .shift{border-left:5px solid var(--c,#2f7fd6); padding-left:12px;}
+  .shift .t{font:700 18px var(--font-display); letter-spacing:.01em;}
+  .shift .tm{color:var(--ink-soft); font-weight:600;}
+  .checklist{list-style:none; padding:0; margin:8px 0 0;}
+  .checklist li{border-top:1px solid var(--line);}
+  .checklist label{display:flex; gap:12px; align-items:flex-start; padding:11px 2px; margin:0; font-size:15px; font-weight:500; color:var(--ink); cursor:pointer;}
+  .checklist input{width:24px; height:24px; flex:none; margin:0; accent-color:var(--ok);}
+  .checklist .done{color:var(--ink-soft);}
+  .checklist .done span.txt{text-decoration:line-through;}
+  .checklist .steps{display:block; font-size:13.5px; color:var(--ink-soft); margin-top:2px;}
+  .checklist .steps span{display:block; padding-left:10px; position:relative;}
+  .checklist .steps span::before{content:'•'; position:absolute; left:0;}
+  .checklist .done .steps{opacity:.6;}
+  .checklist .at{display:block; font-size:12px; color:var(--ok); text-decoration:none;}
+  .restr{padding:8px 0; border-top:1px solid var(--line);} .restr:first-child{border-top:0;}
+  .restr b{display:block;}
+  .restr.mine{background:var(--warn-bg); margin:0 -14px; padding:8px 14px; border-top:0;}
+  .day{padding:10px 0; border-top:1px solid var(--line);} .day:first-child{border-top:0;}
+  .day .dh{display:flex; justify-content:space-between; font-weight:700;}
+  .day.today .dh{color:var(--accent);}
+  .mini{border-left:4px solid var(--c,#2f7fd6); background:var(--surface-2); border-radius:6px; padding:6px 9px; margin-top:6px;}
+  .mini.off{--c:#d4567e; background:var(--crit-bg);}
+  table{width:100%; border-collapse:collapse; font-size:14px;}
+  th,td{text-align:left; padding:7px 4px; border-bottom:1px solid var(--line); vertical-align:top;}
+  th{font-size:12px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em;}
+  td.num, th.num{text-align:right; font-variant-numeric:tabular-nums;}
+  tfoot td{font-weight:700; border-bottom:0;}
+  nav.tabs{position:fixed; bottom:0; left:0; right:0; background:var(--surface); border-top:1px solid var(--line); display:flex; padding-bottom:env(safe-area-inset-bottom); z-index:5;}
+  nav.tabs button{flex:1; border:0; background:none; padding:9px 0 10px; font-size:12px; font-weight:600; color:var(--ink-soft); cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:2px;}
+  nav.tabs button svg{width:22px; height:22px;}
+  nav.tabs button.active{color:var(--accent);}
+  nav.tabs .dot{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--ok); margin-left:3px; vertical-align:middle;}
+  .login{max-width:420px; margin:8vh auto 0; padding:0 16px;}
+  .login .brand{text-align:center; margin-bottom:18px;}
+  .login .brand h1{font:700 26px var(--font-display); color:var(--accent); margin:0;}
+  .code{letter-spacing:.4em; text-align:center; font-size:26px; font-weight:700;}
+  .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(80px + env(safe-area-inset-bottom)); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:10px; font-size:14px; z-index:20; max-width:90vw; box-shadow:0 6px 20px rgba(0,0,0,.25);}
+  .seg{display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin-bottom:10px;}
+  .seg button{flex:1; border:0; background:var(--surface); padding:8px; font-weight:600; font-size:13px; cursor:pointer; color:var(--ink-soft);}
+  .seg button.active{background:var(--accent); color:var(--accent-ink);}
+</style>
+</head>
+<body>
+
+<div id="screen-config" class="login hidden"><div class="card"><h2>Not set up yet</h2><div class="hint" id="config-detail"></div></div></div>
+
+<div id="screen-login" class="login hidden">
+  <div class="brand"><h1>UCAPS Staff</h1><div class="hint">UCard, Access &amp; Parking Services &middot; UMass Lowell</div></div>
+  <div class="card" id="step-email">
+    <h2>Sign in</h2>
+    <div class="hint" style="margin-bottom:12px;">Enter your UML email. We&rsquo;ll email you a sign-in code &mdash; no password needed.</div>
+    <form id="email-form">
+      <div class="field"><label for="in-email">Email</label><input type="email" id="in-email" autocomplete="email" inputmode="email" placeholder="first_last@student.uml.edu" required></div>
+      <div id="email-err" class="callout crit hidden"></div>
+      <button class="btn primary block" id="email-btn" type="submit">Email me a code</button>
+    </form>
+  </div>
+  <div class="card hidden" id="step-code">
+    <h2>Enter your code</h2>
+    <div class="hint" style="margin-bottom:12px;">We sent a code to <strong id="code-email"></strong>. It can take a minute &mdash; check Junk/Quarantine if you don&rsquo;t see it.</div>
+    <form id="code-form">
+      <div class="field"><label for="in-code">Code</label><input id="in-code" class="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="10" required></div>
+      <div id="code-err" class="callout crit hidden"></div>
+      <button class="btn primary block" id="code-btn" type="submit">Sign in</button>
+    </form>
+    <div style="display:flex; justify-content:space-between; margin-top:12px; font-size:14px;">
+      <button class="linklike" id="code-back" type="button">Use a different email</button>
+      <button class="linklike" id="code-resend" type="button">Resend code</button>
+    </div>
+  </div>
+</div>
+
+<div id="screen-app" class="hidden">
+  <header class="top"><h1>UCAPS Staff</h1><div class="who" id="who"></div><button id="signout" type="button">Sign out</button></header>
+  <main id="main"></main>
+  <nav class="tabs" id="tabs">
+    <button data-tab="today" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Today <span class="dot hidden" id="on-dot"></span></span></button>
+    <button data-tab="schedule"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Schedule <span class="dot hidden" id="open-dot" style="background:var(--accent)"></span></span></button>
+    <button data-tab="timeoff"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20c4-8 12-8 16 0"/><circle cx="12" cy="8" r="4"/></svg><span>Time off</span></button>
+    <button data-tab="hours"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg><span>Hours</span></button>
+  </nav>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  /* Same project & publishable key as ucaps-parking-ops.html */
+  const SUPABASE_URL = "https://kljduohcijypnhuaqlfo.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_OKAT4k8AF89d1dQY_tZOeA_ZAODSMjW";
+  const LATE_GRACE_MIN = 7;
+  const REQUEST_REASONS = ['Sick Day','Vacation','Personal Day','Coming in Late','Leaving Early','Requested Day off','Personal Leave - Bereavement','unpaid time off','Requested time off'];
+  const COLORS = {'1. White':'#8a939e','2. Blue':'#2f7fd6','3. Green':'#3c9a4a','4. Purple':'#7b5cc4','5. Pink':'#d4567e','6. Yellow':'#c9a20e','7. Gray':'#6b7480','8. DarkBlue':'#1d4f91','9. DarkGreen':'#246b33','10. DarkPurple':'#553a9a','11. DarkPink':'#a83560','12. DarkYellow':'#a07a00','13. DarkRed':'#a32424','14. Cranberry':'#b0294b','15. DarkOrange':'#c25a12','16. Bronze':'#94622d','17. Peach':'#e08a5f','18. Gold':'#c49a0c','19. Lime':'#7aa31a','20. Forest':'#2f6b3a','21. LightGreen':'#5cb85c','22. Jade':'#1f8a70','23. LightTeal':'#2aa6a6','24. DarkTeal':'#17676b','25. Steel':'#4a6782','26. SkyBlue':'#3fa1e0','27. BlueGray':'#5f7488','28. Lavender':'#9b87d9','29. Lilac':'#b07cc6','30. Plum':'#7d3c74','31. Magenta':'#c0399a','32. DarkBrown':'#5e3b22','33. Beige':'#b39c76','34. Charcoal':'#3b4148','35. Silver':'#9aa3ad'};
+
+  const $ = function(id){ return document.getElementById(id); };
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function pad2(n){ return String(n).padStart(2,'0'); }
+  function isoOf(d){ return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
+  function todayStr(){ return isoOf(new Date()); }
+  function parseDate(iso){ const p=String(iso).slice(0,10).split('-').map(Number); return new Date(p[0],p[1]-1,p[2]); }
+  function addDays(iso,n){ const d=parseDate(iso); d.setDate(d.getDate()+n); return isoOf(d); }
+  function weekStartOf(iso){ const d=parseDate(iso); d.setDate(d.getDate()-d.getDay()); return isoOf(d); }
+  function toMin(t){ if(!t) return 0; const p=String(t).split(':').map(Number); return (p[0]||0)*60+(p[1]||0); }
+  function spanMin(a,b){ let x=toMin(a), y=toMin(b); if(y<=x) y+=1440; return y-x; }
+  function fmtTime(t){ if(!t) return ''; const p=String(t).split(':').map(Number); const h=p[0]||0, m=p[1]||0; let hh=h%12; if(!hh) hh=12; return hh+(m?':'+pad2(m):'')+' '+(h>=12?'PM':'AM'); }
+  function fmtRange(a,b){ return fmtTime(a)+'–'+fmtTime(b); }
+  function fmtClock(ts){ return new Date(ts).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
+  function fmtDay(iso){ return parseDate(iso).toLocaleDateString('en-US',{weekday:'short', month:'short', day:'numeric'}); }
+  function fmtDayLong(iso){ return parseDate(iso).toLocaleDateString('en-US',{weekday:'long', month:'long', day:'numeric'}); }
+  function hrs(min){ const h=Math.round(min/6)/10; return h%1===0 ? h.toFixed(0) : h.toFixed(1); }
+  function dur(min){ min=Math.max(0,Math.round(min)); return Math.floor(min/60)+'h '+pad2(min%60)+'m'; }
+  function shiftMin(s){ return Math.max(0, spanMin(s.start_time,s.end_time)-(s.unpaid_break||0)); }
+  function shiftStart(s){ const d=parseDate(s.shift_date); d.setMinutes(toMin(s.start_time)); return d; }
+  function shiftEnd(s){ const d=parseDate(s.shift_date); d.setMinutes(toMin(s.start_time)+spanMin(s.start_time,s.end_time)); return d; }
+  function punchMin(p){ return Math.max(0, ((p.clock_out?new Date(p.clock_out):new Date()) - new Date(p.clock_in))/60000); }
+  function color(c){ return COLORS[c] || COLORS['2. Blue']; }
+  function errMsg(e){
+    const m = (e && (e.message || e.error_description)) || String(e);
+    if(/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'No connection — check your signal and try again.';
+    if(/rate limit|too many/i.test(m)) return 'Too many tries — wait a few minutes and try again.';
+    if(/expired|invalid/i.test(m) && /token|otp|code/i.test(m)) return 'That code is wrong or expired. Check the newest email, or tap “Resend code”.';
+    if(/Signups not allowed|not found|user.*not.*exist/i.test(m)) return 'Your sign-in isn’t set up yet. Ask your supervisor to add you in Parking Ops (or press “Check sign-in accounts” there), then try again.';
+    return m;
+  }
+  let toastTimer;
+  function toast(msg){ let t=document.querySelector('.toast'); if(!t){ t=document.createElement('div'); t.className='toast'; t.setAttribute('role','status'); document.body.appendChild(t); } t.textContent=msg; t.hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(function(){ t.hidden=true; }, 3500); }
+  function show(id){ ['screen-config','screen-login','screen-app'].forEach(function(s){ $(s).classList.toggle('hidden', s!==id); }); }
+
+  if(!window.supabase){ show('screen-config'); $('config-detail').textContent='The Supabase library could not load. Check your connection and reload.'; return; }
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:false}});
+
+  /* ---------------- sign in with emailed code ---------------- */
+  let pendingEmail = '', resendAt = 0, resendTimer = null;
+  function showStep(step){ $('step-email').classList.toggle('hidden', step!=='email'); $('step-code').classList.toggle('hidden', step!=='code'); }
+  function setErr(id, msg){ const el=$(id); el.textContent = msg||''; el.classList.toggle('hidden', !msg); }
+  function tickResend(){
+    const left = Math.ceil((resendAt - Date.now())/1000), b = $('code-resend');
+    if(left>0){ b.disabled = true; b.textContent = 'Resend in '+left+'s'; }
+    else { b.disabled = false; b.textContent = 'Resend code'; clearInterval(resendTimer); }
+  }
+  async function sendCode(email){
+    const res = await sb.auth.signInWithOtp({email: email, options:{shouldCreateUser:false}});
+    if(res.error) throw res.error;
+    resendAt = Date.now()+60000; clearInterval(resendTimer); resendTimer = setInterval(tickResend, 1000); tickResend();
+  }
+  try{ const last = localStorage.getItem('ucaps-staff-email'); if(last) $('in-email').value = last; }catch(e){}
+  $('email-form').addEventListener('submit', async function(e){
+    e.preventDefault(); setErr('email-err');
+    const email = $('in-email').value.trim().toLowerCase(), btn = $('email-btn');
+    if(!email) return;
+    btn.disabled = true; btn.textContent = 'Checking…';
+    try{
+      const chk = await sb.rpc('staff_check_email', {p_email: email});
+      if(!chk.error && chk.data === false){
+        setErr('email-err', email+' isn’t on the UCAPS staff list. Use your UML email address, or ask your supervisor to add you.');
+        return;
+      }
+      btn.textContent = 'Sending…';
+      await sendCode(email);
+      pendingEmail = email;
+      try{ localStorage.setItem('ucaps-staff-email', email); }catch(e){}
+      $('code-email').textContent = email; $('in-code').value = '';
+      showStep('code'); setTimeout(function(){ $('in-code').focus(); }, 50);
+    }catch(err){ setErr('email-err', errMsg(err)); }
+    finally{ btn.disabled = false; btn.textContent = 'Email me a code'; }
+  });
+  $('code-form').addEventListener('submit', async function(e){
+    e.preventDefault(); setErr('code-err');
+    const token = $('in-code').value.replace(/\D/g,''), btn = $('code-btn');
+    if(token.length < 6){ setErr('code-err', 'Enter the code from the email.'); return; }
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    try{
+      const res = await sb.auth.verifyOtp({email: pendingEmail, token: token, type:'email'});
+      if(res.error) throw res.error;
+      // onAuthStateChange takes it from here
+    }catch(err){ setErr('code-err', errMsg(err)); }
+    finally{ btn.disabled = false; btn.textContent = 'Sign in'; }
+  });
+  $('in-code').addEventListener('input', function(){ const v=this.value.replace(/\D/g,''); if(v!==this.value) this.value=v; });
+  $('code-back').addEventListener('click', function(){ showStep('email'); setErr('code-err'); });
+  $('code-resend').addEventListener('click', async function(){
+    setErr('code-err');
+    try{ await sendCode(pendingEmail); toast('New code sent.'); }catch(err){ setErr('code-err', errMsg(err)); }
+  });
+
+  /* ---------------- app state ---------------- */
+  const S = {me:null, shifts:[], open:[], reqs:[], rels:[], punches:[], checks:[], timeoff:[], dayInfo:{}, tab:'today', hoursWeek:null, showPast:false, openDay:null};
+  let channel = null, tickTimer = null, loading = false;
+
+  async function loadData(){
+    if(loading) return; loading = true;
+    try{
+      // Filter explicitly by the signed-in person: managers can read everyone's rows, staff only their own.
+      const sess = await sb.auth.getSession();
+      const myEmail = (sess.data && sess.data.session && sess.data.session.user.email || '').toLowerCase();
+      const me = await sb.from('staff_members').select('*').eq('email', myEmail).eq('active', true).maybeSingle();
+      if(me.error) throw me.error;
+      S.me = me.data;
+      if(!S.me){ renderNotStaff(); return; }
+      const t = todayStr(), from = addDays(weekStartOf(t), -21), to = addDays(t, 42);
+      const results = await Promise.all([
+        sb.from('shifts').select('*').or('staff_id.eq.'+S.me.id+',staff_id.is.null').eq('published', true).gte('shift_date', from).lte('shift_date', to).order('shift_date').order('start_time'),
+        sb.from('punches').select('*').eq('staff_id', S.me.id).gte('clock_in', parseDate(from).toISOString()).order('clock_in'),
+        sb.from('time_off').select('*').eq('staff_id', S.me.id).gte('end_date', from).order('start_date'),
+        sb.rpc('staff_day_info', {p_date: t}),
+        sb.from('shift_requests').select('*').eq('staff_id', S.me.id),
+        sb.from('shift_releases').select('*').eq('staff_id', S.me.id)
+      ]);
+      results.forEach(function(r, i){ if(r.error && !(i>=4 && /shift_(requests|releases)/.test(r.error.message||''))) throw r.error; });
+      S.rels = results[5].error ? [] : (results[5].data||[]);
+      const all = results[0].data||[];
+      S.shifts = all.filter(function(x){ return x.staff_id===S.me.id; });
+      const releasedByMe = S.rels.filter(function(r){ return r.status==='Approved'; }).map(function(r){ return r.shift_id; });
+      S.open = all.filter(function(x){ return !x.staff_id && x.shift_date>=t && (!x.grp || !S.me.grp || x.grp===S.me.grp) && releasedByMe.indexOf(x.id)===-1; });
+      S.reqs = results[4].error ? [] : (results[4].data||[]);
+      S.punches = results[1].data||[]; S.timeoff = results[2].data||[];
+      S.dayInfo[t] = results[3].data;
+      const ids = S.shifts.filter(function(s){ return s.shift_date>=addDays(t,-1) && s.shift_date<=t; }).map(function(s){ return s.id; });
+      if(ids.length){ const c = await sb.from('shift_checks').select('*').in('shift_id', ids); if(c.error) throw c.error; S.checks = c.data||[]; } else S.checks = [];
+      render();
+    }catch(err){
+      console.error(err);
+      $('main').innerHTML = '<div class="callout crit">Couldn’t load your schedule: '+esc(errMsg(err))+'</div><button class="btn block" id="retry">Try again</button>';
+      $('retry').onclick = function(){ loadData(); };
+    }finally{ loading = false; }
+  }
+  async function dayInfo(iso){
+    if(S.dayInfo[iso]!==undefined) return S.dayInfo[iso];
+    const r = await sb.rpc('staff_day_info', {p_date: iso});
+    S.dayInfo[iso] = r.error ? null : r.data; return S.dayInfo[iso];
+  }
+  function renderNotStaff(){
+    $('who').textContent = '';
+    $('main').innerHTML = '<div class="card"><h2>Not on the staff list</h2><p class="hint">You&rsquo;re signed in, but this email isn&rsquo;t on the UCAPS staff list (or it&rsquo;s been deactivated). Ask your supervisor to add you, then sign out and back in.</p><button class="btn block" id="ns-out">Sign out</button></div>';
+    $('ns-out').onclick = signOut;
+  }
+
+  function openPunch(){ return S.punches.find(function(p){ return !p.clock_out; }) || null; }
+  function shiftsOn(iso){ return S.shifts.filter(function(s){ return s.shift_date===iso; }); }
+  function offOn(iso){ return S.timeoff.filter(function(t){ return t.status!=='Denied' && iso>=t.start_date && iso<=t.end_date; }); }
+  function bestShiftNow(){
+    const now = new Date(), t = todayStr();
+    const cands = S.shifts.filter(function(s){ return s.shift_date===t || s.shift_date===addDays(t,-1); })
+      .filter(function(s){ return shiftEnd(s) > now && !S.punches.some(function(p){ return p.shift_id===s.id; }); })
+      .sort(function(a,b){ return shiftStart(a)-shiftStart(b); });
+    return cands[0] || null;
+  }
+  function lotVariants(name){
+    const n = String(name||'').toLowerCase().trim();
+    const out = [n, n.replace(/\bcampus\s+/,'')];
+    const core = n.replace(/\s*\(.*?\)/g,'').replace(/\s*\b(surface\s+)?(lot|lots|garage|deck)\b.*$/,'').trim();
+    out.push(core);
+    core.split(/[\s\/]+/).forEach(function(w){ if(w.length>=6) out.push(w); });
+    const par = (n.match(/\(([^)]*)\)/)||[])[1];
+    if(par) out.push(par.replace(/^fka\s+/,'').replace(/\s*(parking\s+)?lot$/,'').trim());
+    const stop = ['metered','campus','north','south','east','west','visitor','faculty','student','mixed'];
+    return out.filter(function(v,i,a){ return v && v.length>=5 && stop.indexOf(v)===-1 && a.indexOf(v)===i; });
+  }
+  function onRoute(s, lots){
+    const text = ((s.checklist||[]).join('\n')+'\n'+(s.notes||'')).toLowerCase();
+    return (lots||[]).filter(function(l){ return (s.lots||[]).indexOf(l)!==-1 || lotVariants(l).some(function(v){ return text.indexOf(v)!==-1; }); });
+  }
+
+  /* ---------------- render ---------------- */
+  function render(){
+    if(!S.me) return;
+    $('who').innerHTML = esc(S.me.name.split(',').reverse().join(' ').trim());
+    $('on-dot').classList.toggle('hidden', !openPunch());
+    $('open-dot').classList.toggle('hidden', !S.open.some(function(o){ const r = myReq(o.id); return !r || r.status==='Declined'; }));
+    document.querySelectorAll('#tabs button').forEach(function(b){ b.classList.toggle('active', b.dataset.tab===S.tab); });
+    const y = window.scrollY;
+    if(S.tab==='today') renderToday();
+    else if(S.tab==='schedule') renderSchedule();
+    else if(S.tab==='timeoff') renderTimeOff();
+    else renderHours();
+    window.scrollTo(0, y);
+  }
+
+  function restrictionsHtml(info, myShifts){
+    if(!info) return '<div class="hint">Couldn’t load today’s notes.</div>';
+    const rows = [];
+    if(info.holiday) rows.push({mine:false, html:'<b>Holiday: '+esc(info.holiday)+'</b>'});
+    if(info.day_note) rows.push({mine:false, html:'<b>'+esc(info.day_note)+'</b><span class="hint">Note from your supervisor</span>'});
+    (info.events||[]).forEach(function(e){
+      if(!e.enforcement_note && !(e.lots||[]).length) return;
+      const hit = myShifts.some(function(s){ return onRoute(s, e.lots).length; });
+      rows.push({mine: hit && !!e.enforcement_note, html:'<b>'+esc(e.enforcement_note || e.title)+'</b><span class="hint">'+(e.enforcement_note?esc(e.title)+' · ':'')+esc((e.lots||[]).join(', '))+(e.start_time?' · '+fmtRange(e.start_time,e.end_time):'')+(hit&&e.enforcement_note?' · <strong>on your route</strong>':'')+'</span>'});
+    });
+    (info.impacts||[]).forEach(function(i){
+      const hit = myShifts.some(function(s){ return onRoute(s, i.lots).length; });
+      rows.push({mine:hit, html:'<b>'+esc((i.lots||[]).join(', '))+': '+esc(i.type||'restricted')+'</b>'+(i.description?'<span class="hint">'+esc(i.description)+'</span>':'')+(hit?'<span class="hint"><strong>on your route</strong></span>':'')});
+    });
+    if(!rows.length) return '<div class="hint">No events, closures or special notes.</div>';
+    rows.sort(function(a,b){ return b.mine-a.mine; });
+    return rows.map(function(r){ return '<div class="restr'+(r.mine?' mine':'')+'">'+r.html+'</div>'; }).join('');
+  }
+
+  function renderToday(){
+    const t = todayStr(), op = openPunch(), mine = shiftsOn(t);
+    let h = '<div class="hint" style="margin:0 2px 8px;">'+fmtDayLong(t)+'</div>';
+    // clock card
+    h += '<div class="card">';
+    if(op){
+      const s = S.shifts.find(function(x){ return x.id===op.shift_id; });
+      h += '<div class="hint">Clocked in at '+fmtClock(op.clock_in)+(s?' · '+esc(s.label||'')+'':'')+'</div><div class="big" id="elapsed">'+dur(punchMin(op))+'</div>'+
+        '<div class="field" style="margin-top:10px;"><label for="out-note">Note (optional)</label><input id="out-note" placeholder="e.g. stayed late for event"></div>'+
+        '<button class="clockbtn out" id="clock-btn">Clock out</button>';
+    } else {
+      const s = bestShiftNow();
+      const opts = S.shifts.filter(function(x){ return (x.shift_date===t || x.shift_date===addDays(t,-1)) && shiftEnd(x) > new Date() && !S.punches.some(function(p){ return p.shift_id===x.id; }); });
+      h += '<div class="hint">You&rsquo;re clocked out.</div>';
+      if(opts.length > 1 || (opts.length===1 && !s)){
+        h += '<div class="field" style="margin-top:8px;"><label for="clock-shift">Clocking in for</label><select id="clock-shift">'+opts.map(function(x){ return '<option value="'+x.id+'"'+(s&&x.id===s.id?' selected':'')+'>'+esc(x.label||'Shift')+' · '+fmtRange(x.start_time,x.end_time)+'</option>'; }).join('')+'<option value="">Not a scheduled shift</option></select></div>';
+      } else if(s){
+        h += '<div style="margin:6px 0 10px;">For <strong>'+esc(s.label||'your shift')+'</strong> · '+fmtRange(s.start_time,s.end_time)+'</div><input type="hidden" id="clock-shift" value="'+s.id+'">';
+      } else {
+        h += '<div class="callout info">No scheduled shift right now. You can still clock in &mdash; your supervisor will see it wasn&rsquo;t scheduled.</div><input type="hidden" id="clock-shift" value="">';
+      }
+      h += '<button class="clockbtn in" id="clock-btn">Clock in</button>';
+    }
+    h += '<div class="hint" style="margin-top:8px;">Your location is saved with each punch if you allow it. Hours still go into HR Direct as usual.</div></div>';
+
+    h += '<div class="card"><h2>Today on campus</h2>'+restrictionsHtml(S.dayInfo[t], mine)+'</div>';
+    // shifts today
+    const offs = offOn(t);
+    offs.forEach(function(o){ h += '<div class="callout '+(o.status==='Approved'?'warn':'info')+'"><strong>'+esc(o.reason)+'</strong>'+(o.start_time?' '+fmtRange(o.start_time,o.end_time):' (all day)')+(o.status==='Requested'?' · requested, not approved yet':'')+'</div>'; });
+    if(!mine.length){
+      const next = S.shifts.find(function(s){ return s.shift_date>t; });
+      h += '<div class="card"><h2>No shifts today</h2><div class="hint">'+(next?'Next: <strong>'+fmtDay(next.shift_date)+'</strong> · '+esc(next.label||'')+' '+fmtRange(next.start_time,next.end_time):'Nothing else on your schedule yet.')+'</div>'+(S.open.length?'<div style="margin-top:8px;"><button class="linklike" id="see-open">'+S.open.length+' open shift'+(S.open.length>1?'s':'')+' available to pick up →</button></div>':'')+'</div>';
+    }
+    mine.forEach(function(s){
+      const ps = S.punches.filter(function(p){ return p.shift_id===s.id; });
+      const late = ps.length && (new Date(ps[0].clock_in)-shiftStart(s))/60000 > LATE_GRACE_MIN;
+      h += '<div class="card"><div class="shift" style="--c:'+color(s.color)+'"><div class="t">'+esc(s.label||'Shift')+'</div><div class="tm">'+fmtRange(s.start_time,s.end_time)+(s.unpaid_break?' · '+s.unpaid_break+' min unpaid break':'')+'</div>'+
+        (ps.length?'<div style="margin-top:4px;"><span class="pill '+(late?'warn':'ok')+'">in '+fmtClock(ps[0].clock_in)+(ps[0].clock_out?' · out '+fmtClock(ps[0].clock_out):'')+'</span></div>':'')+'</div>'+
+        (s.notes?'<div class="callout info" style="white-space:pre-wrap;">'+esc(s.notes)+'</div>':'');
+      if((s.checklist||[]).length){
+        const done = S.checks.filter(function(c){ return c.shift_id===s.id; });
+        h += '<h3>Checklist <span class="hint">('+done.length+' of '+s.checklist.length+')</span></h3><ul class="checklist">'+s.checklist.map(function(item, i){
+          const c = done.find(function(x){ return x.item_idx===i; });
+          return '<li><label class="'+(c?'done':'')+'"><input type="checkbox" data-check="'+s.id+'" data-idx="'+i+'"'+(c?' checked':'')+'><span>'+itemHtml(item)+''+(c?'<span class="at">✓ '+fmtClock(c.checked_at)+'</span>':'')+'</span></label></li>';
+        }).join('')+'</ul>';
+      }
+      h += '</div>';
+    });
+    $('main').innerHTML = h;
+    $('clock-btn').onclick = op ? clockOut : clockIn;
+    if($('see-open')) $('see-open').onclick = function(){ S.tab = 'schedule'; window.scrollTo(0,0); render(); };
+    document.querySelectorAll('[data-check]').forEach(function(cb){ cb.onchange = function(){ toggleCheck(this); }; });
+  }
+
+  // Route items look like "Lot name — instruction · instruction"; show the lot bold and the steps underneath.
+  function itemHtml(item){
+    const i = String(item).indexOf(' — ');
+    if(i<0) return '<span class="txt">'+esc(item)+'</span>';
+    return '<span class="txt"><strong>'+esc(item.slice(0,i))+'</strong></span><span class="steps">'+item.slice(i+3).split(' · ').map(function(x){ return '<span>'+esc(x)+'</span>'; }).join('')+'</span>';
+  }
+  function getLocation(){
+    return new Promise(function(resolve){
+      if(!navigator.geolocation) return resolve(null);
+      let done = false;
+      const t = setTimeout(function(){ if(!done){ done = true; resolve(null); } }, 7000);
+      navigator.geolocation.getCurrentPosition(function(p){ if(done) return; done = true; clearTimeout(t); resolve(p.coords); },
+        function(){ if(done) return; done = true; clearTimeout(t); resolve(null); }, {enableHighAccuracy:true, timeout:6500, maximumAge:60000});
+    });
+  }
+  async function clockIn(){
+    const b = $('clock-btn'); b.disabled = true; b.textContent = 'Clocking in…';
+    const shiftId = $('clock-shift') ? ($('clock-shift').value || null) : null;
+    const pos = await getLocation();
+    const r = await sb.rpc('staff_clock_in', {p_shift: shiftId, p_lat: pos?pos.latitude:null, p_lng: pos?pos.longitude:null, p_acc: pos?pos.accuracy:null});
+    if(r.error){ b.disabled = false; b.textContent = 'Clock in'; toast(errMsg(r.error)); await loadData(); return; }
+    S.punches.push(r.data); toast('Clocked in at '+fmtClock(r.data.clock_in)); render();
+  }
+  async function clockOut(){
+    const b = $('clock-btn'); b.disabled = true; b.textContent = 'Clocking out…';
+    const note = $('out-note') ? $('out-note').value.trim() : '';
+    const pos = await getLocation();
+    const r = await sb.rpc('staff_clock_out', {p_lat: pos?pos.latitude:null, p_lng: pos?pos.longitude:null, p_acc: pos?pos.accuracy:null, p_note: note||null});
+    if(r.error){ b.disabled = false; b.textContent = 'Clock out'; toast(errMsg(r.error)); await loadData(); return; }
+    const i = S.punches.findIndex(function(p){ return p.id===r.data.id; }); if(i>=0) S.punches[i] = r.data; else S.punches.push(r.data);
+    toast('Clocked out · '+dur(punchMin(r.data))); render();
+  }
+  async function toggleCheck(cb){
+    const shift = cb.dataset.check, idx = +cb.dataset.idx, on = cb.checked;
+    cb.disabled = true;
+    const r = await sb.rpc('staff_toggle_check', {p_shift: shift, p_idx: idx, p_done: on});
+    cb.disabled = false;
+    if(r.error){ cb.checked = !on; toast(errMsg(r.error)); return; }
+    S.checks = S.checks.filter(function(c){ return !(c.shift_id===shift && c.item_idx===idx); });
+    if(on) S.checks.push({shift_id:shift, item_idx:idx, checked_at:new Date().toISOString()});
+    render();
+  }
+
+  function myReq(shiftId){ return S.reqs.find(function(r){ return r.shift_id===shiftId; }) || null; }
+  function openConflict(o){
+    const a = toMin(o.start_time), b = a+spanMin(o.start_time,o.end_time);
+    const clash = shiftsOn(o.shift_date).find(function(x){ const p = toMin(x.start_time), q = p+spanMin(x.start_time,x.end_time); return a<q && p<b; });
+    if(clash) return 'Overlaps your '+(clash.label||'shift')+' '+fmtRange(clash.start_time,clash.end_time);
+    const off = offOn(o.shift_date).find(function(x){ return x.status==='Approved'; });
+    return off ? 'You have time off that day ('+off.reason+')' : '';
+  }
+  function openShiftsHtml(){
+    if(!S.open.length) return '';
+    return '<div class="card"><h2>Open shifts you can pick up</h2><div class="hint" style="margin-bottom:6px;">Request one and your supervisor will confirm. If it&rsquo;s approved, it shows up in your schedule.</div>'+
+      S.open.slice().sort(function(a,b){ return (a.shift_date+a.start_time).localeCompare(b.shift_date+b.start_time); }).map(function(o){
+        const r = myReq(o.id), clash = (r && r.status==='Approved') ? '' : openConflict(o);
+        let act;
+        if(r && r.status==='Approved') act = '<span class="pill ok">you&rsquo;re on it</span>';
+        else if(!r || r.status==='Declined') act = (r?'<span class="pill crit">declined</span> ':'')+'<button class="btn small primary" data-req="'+o.id+'">'+(r?'Ask again':'Request')+'</button>';
+        else act = '<span class="pill blue">requested</span> <button class="btn small ghost" data-withdraw="'+r.id+'">Withdraw</button>';
+        return '<div class="day"><div class="dh"><span>'+fmtDay(o.shift_date)+'</span><span>'+act+'</span></div>'+
+          '<div class="mini" style="--c:'+color(o.color)+'"><strong>'+esc(o.label||'Open shift')+'</strong><br><span class="hint">'+fmtRange(o.start_time,o.end_time)+((o.open_slots||1)>1?' · '+o.open_slots+' spots':'')+'</span></div>'+
+          (clash?'<div class="hint" style="color:var(--warn);margin-top:4px;">⚠ '+esc(clash)+'</div>':'')+'</div>';
+      }).join('')+'</div>';
+  }
+  async function requestOpen(id, btn){
+    const note = prompt('Add a note for your supervisor (optional):', '');
+    if(note===null) return;
+    btn.disabled = true;
+    const r = await sb.rpc('staff_request_shift', {p_shift:id, p_note: note||null});
+    if(r.error){ btn.disabled = false; toast(errMsg(r.error)); await loadData(); return; }
+    S.reqs = S.reqs.filter(function(x){ return x.shift_id!==id; }).concat([r.data]); toast('Request sent.'); render();
+  }
+  async function withdrawReq(id, btn){
+    if(!confirm('Withdraw this request?')) return;
+    btn.disabled = true;
+    const r = await sb.rpc('staff_withdraw_request', {p_request:id});
+    if(r.error){ btn.disabled = false; toast(errMsg(r.error)); return; }
+    S.reqs = S.reqs.filter(function(x){ return x.id!==id; }); toast('Request withdrawn.'); render();
+  }
+  function myRelease(shiftId){ return S.rels.filter(function(r){ return r.shift_id===shiftId; }).sort(function(a,b){ return String(b.created_at).localeCompare(String(a.created_at)); })[0] || null; }
+  function releaseCtl(s){
+    if(shiftStart(s) <= new Date()) return '';
+    const r = myRelease(s.id);
+    if(r && r.status==='Requested') return '<div style="margin-top:6px;"><span class="pill warn">release requested</span> <button class="btn small ghost" data-relcancel="'+r.id+'">Cancel</button></div>';
+    return '<div style="margin-top:6px;">'+(r && r.status==='Denied' ? '<span class="pill crit">release denied</span> ' : '')+'<button class="btn small ghost" data-release="'+s.id+'">Request release</button></div>';
+  }
+  async function requestRelease(id, btn){
+    const reason = prompt('Why do you need to give up this shift? (your supervisor will see this)', '');
+    if(reason===null) return;
+    if(!reason.trim()){ toast('Please add a short reason.'); return; }
+    btn.disabled = true;
+    const r = await sb.rpc('staff_request_release', {p_shift:id, p_reason: reason});
+    if(r.error){ btn.disabled = false; toast(errMsg(r.error)); return; }
+    S.rels = S.rels.filter(function(x){ return x.shift_id!==id; }).concat([r.data]);
+    toast('Release requested. You’re still on this shift until your supervisor approves.'); render();
+  }
+  async function cancelRelease(id, btn){
+    if(!confirm('Cancel your release request? You’ll keep the shift.')) return;
+    btn.disabled = true;
+    const r = await sb.rpc('staff_cancel_release', {p_release:id});
+    if(r.error){ btn.disabled = false; toast(errMsg(r.error)); return; }
+    S.rels = S.rels.filter(function(x){ return x.id!==id; }); toast('Release request cancelled.'); render();
+  }
+  function renderSchedule(){
+    const t = todayStr();
+    const start = S.showPast ? addDays(weekStartOf(t), -14) : t;
+    const end = addDays(t, 41);
+    let h = openShiftsHtml()+'<div class="card"><h2>My schedule</h2><div class="hint">Only published shifts appear here. Tap a day for that day&rsquo;s events and closures. Can&rsquo;t make a shift? Tap <em>Request release</em> &mdash; you stay on it until your supervisor approves.</div>'+
+      '<div style="margin-top:8px;"><button class="linklike" id="toggle-past">'+(S.showPast?'Hide past days':'Show the last few weeks')+'</button></div></div><div class="card">';
+    let any = false;
+    for(let d = start; d <= end; d = addDays(d,1)){
+      const ss = shiftsOn(d), offs = offOn(d);
+      if(!ss.length && !offs.length && d!==t) continue;
+      any = true;
+      const mins = ss.reduce(function(a,s){ return a+shiftMin(s); },0);
+      h += '<div class="day'+(d===t?' today':'')+'" data-day="'+d+'"><div class="dh"><span>'+(d===t?'Today · ':'')+fmtDay(d)+'</span><span class="hint">'+(mins?hrs(mins)+' h':'')+'</span></div>'+
+        offs.map(function(o){ return '<div class="mini off"><strong>'+esc(o.reason)+'</strong> '+(o.start_time?fmtRange(o.start_time,o.end_time):'all day')+(o.status==='Requested'?' · <span class="pill blue">requested</span>':'')+'</div>'; }).join('')+
+        ss.map(function(s){ return '<div class="mini" style="--c:'+color(s.color)+'"><strong>'+esc(s.label||'Shift')+'</strong><br><span class="hint">'+fmtRange(s.start_time,s.end_time)+'</span>'+releaseCtl(s)+'</div>'; }).join('')+
+        (!ss.length && !offs.length ? '<div class="hint">Not scheduled</div>' : '')+
+        (S.openDay===d ? '<div style="margin-top:8px;" id="dayinfo">Loading…</div>' : '')+'</div>';
+    }
+    if(!any) h += '<div class="hint">No shifts scheduled yet.</div>';
+    h += '</div>';
+    $('main').innerHTML = h;
+    $('toggle-past').onclick = function(){ S.showPast = !S.showPast; render(); };
+    document.querySelectorAll('[data-req]').forEach(function(b){ b.onclick = function(e){ e.stopPropagation(); requestOpen(b.dataset.req, b); }; });
+    document.querySelectorAll('[data-withdraw]').forEach(function(b){ b.onclick = function(e){ e.stopPropagation(); withdrawReq(b.dataset.withdraw, b); }; });
+    document.querySelectorAll('[data-release]').forEach(function(b){ b.onclick = function(e){ e.stopPropagation(); requestRelease(b.dataset.release, b); }; });
+    document.querySelectorAll('[data-relcancel]').forEach(function(b){ b.onclick = function(e){ e.stopPropagation(); cancelRelease(b.dataset.relcancel, b); }; });
+    document.querySelectorAll('[data-day]').forEach(function(el){ el.onclick = function(){ S.openDay = (S.openDay===el.dataset.day) ? null : el.dataset.day; render(); }; });
+    if(S.openDay){ const d = S.openDay; dayInfo(d).then(function(info){ const el = $('dayinfo'); if(el && S.openDay===d) el.innerHTML = restrictionsHtml(info, shiftsOn(d)); }); }
+  }
+
+  function renderTimeOff(){
+    const t = todayStr();
+    const mine = S.timeoff.slice().sort(function(a,b){ return String(b.start_date).localeCompare(String(a.start_date)); });
+    let h = '<div class="card"><h2>Request time off</h2><div class="hint" style="margin-bottom:10px;">Goes to your supervisor for approval. For sick days or emergencies, also call or text your supervisor.</div>'+
+      '<form id="to-form"><div class="row"><div class="field"><label for="to-sd">First day</label><input type="date" id="to-sd" value="'+t+'" required></div><div class="field"><label for="to-ed">Last day</label><input type="date" id="to-ed" value="'+t+'" required></div></div>'+
+      '<div class="field"><label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);"><input type="checkbox" id="to-part" style="width:20px;height:20px;"> Part of the day only</label></div>'+
+      '<div class="row hidden" id="to-times"><div class="field"><label for="to-st">From</label><input type="time" id="to-st"></div><div class="field"><label for="to-et">To</label><input type="time" id="to-et"></div></div>'+
+      '<div class="field"><label for="to-reason">Reason</label><select id="to-reason">'+REQUEST_REASONS.map(function(r){ return '<option>'+esc(r)+'</option>'; }).join('')+'</select></div>'+
+      '<div class="field"><label for="to-note">Note (optional)</label><textarea id="to-note"></textarea></div>'+
+      '<div id="to-err" class="callout crit hidden"></div><button class="btn primary block" id="to-btn" type="submit">Send request</button></form></div>';
+    h += '<div class="card"><h2>My time off</h2>'+(mine.length ? mine.map(function(o){
+      return '<div class="day"><div class="dh"><span>'+fmtDay(o.start_date)+(o.end_date!==o.start_date?' – '+fmtDay(o.end_date):'')+'</span><span class="pill '+(o.status==='Approved'?'ok':o.status==='Denied'?'crit':'blue')+'">'+esc(o.status)+'</span></div>'+
+        '<div>'+esc(o.reason)+' · '+(o.start_time?fmtRange(o.start_time,o.end_time):'all day')+'</div>'+(o.notes?'<div class="hint">'+esc(o.notes)+'</div>':'')+
+        (o.status==='Requested'?'<button class="btn small ghost" data-cancel="'+o.id+'" style="margin-top:6px;">Cancel request</button>':'')+'</div>';
+    }).join('') : '<div class="hint">Nothing yet.</div>')+'</div>';
+    $('main').innerHTML = h;
+    $('to-part').onchange = function(){ $('to-times').classList.toggle('hidden', !this.checked); };
+    $('to-sd').onchange = function(){ if($('to-ed').value < this.value) $('to-ed').value = this.value; };
+    $('to-form').onsubmit = submitTimeOff;
+    document.querySelectorAll('[data-cancel]').forEach(function(b){ b.onclick = async function(){
+      if(!confirm('Cancel this request?')) return;
+      const r = await sb.from('time_off').delete().eq('id', b.dataset.cancel);
+      if(r.error){ toast(errMsg(r.error)); return; }
+      S.timeoff = S.timeoff.filter(function(o){ return o.id!==b.dataset.cancel; }); toast('Request cancelled.'); render();
+    }; });
+  }
+  async function submitTimeOff(e){
+    e.preventDefault(); setErr('to-err');
+    const sd = $('to-sd').value, ed = $('to-ed').value || sd, part = $('to-part').checked;
+    if(!sd) return setErr('to-err','Pick the first day.');
+    if(ed < sd) return setErr('to-err','The last day is before the first day.');
+    if(part && (!$('to-st').value || !$('to-et').value)) return setErr('to-err','Enter from/to times, or untick “Part of the day”.');
+    const b = $('to-btn'); b.disabled = true; b.textContent = 'Sending…';
+    const row = {staff_id:S.me.id, start_date:sd, end_date:ed, start_time: part?$('to-st').value:null, end_time: part?$('to-et').value:null,
+      reason:$('to-reason').value, notes: $('to-note').value.trim()||null, status:'Requested'};
+    const r = await sb.from('time_off').insert(row).select().single();
+    b.disabled = false; b.textContent = 'Send request';
+    if(r.error) return setErr('to-err', errMsg(r.error));
+    S.timeoff.push(r.data); toast('Request sent to your supervisor.'); render();
+  }
+
+  function renderHours(){
+    const t = todayStr();
+    if(!S.hoursWeek) S.hoursWeek = weekStartOf(t);
+    const ws = S.hoursWeek, we = addDays(ws, 6);
+    let sched = 0, clocked = 0, rows = '';
+    for(let d = ws; d <= we; d = addDays(d,1)){
+      const ss = shiftsOn(d), ps = S.punches.filter(function(p){ return isoOf(new Date(p.clock_in))===d; });
+      const sm = ss.reduce(function(a,s){ return a+shiftMin(s); },0), cm = ps.reduce(function(a,p){ return a+punchMin(p); },0);
+      sched += sm; clocked += cm;
+      if(!ss.length && !ps.length) continue;
+      rows += '<tr><td>'+fmtDay(d)+'</td><td>'+(ps.map(function(p){ return fmtClock(p.clock_in)+'–'+(p.clock_out?fmtClock(p.clock_out):'<em>now</em>')+(p.edited_by?' <span class="pill gray">fixed</span>':''); }).join('<br>')||'<span class="hint">no punch</span>')+'</td>'+
+        '<td class="num">'+(sm?hrs(sm):'—')+'</td><td class="num">'+hrs(cm)+'</td></tr>';
+    }
+    const canNext = ws < weekStartOf(t);
+    let h = '<div class="card"><h2>My hours</h2><div class="hint">Use this when you enter your time in HR Direct. If a punch is wrong, tell your supervisor &mdash; they can fix it.</div>'+
+      '<div class="seg" style="margin-top:10px;"><button id="hw-prev">&larr; Earlier</button><button class="active" disabled>'+fmtDay(ws)+' – '+fmtDay(we)+'</button><button id="hw-next"'+(canNext?'':' disabled')+'>Later &rarr;</button></div>'+
+      '<table><thead><tr><th>Day</th><th>Punches</th><th class="num">Sched</th><th class="num">Clocked</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" class="hint">Nothing this week.</td></tr>')+'</tbody>'+
+      '<tfoot><tr><td colspan="2">Total</td><td class="num">'+hrs(sched)+'</td><td class="num">'+hrs(clocked)+'</td></tr></tfoot></table>'+
+      (ws < addDays(weekStartOf(t),-14) ? '<div class="hint" style="margin-top:8px;">Older weeks may be incomplete here &mdash; ask your supervisor.</div>' : '')+'</div>';
+    $('main').innerHTML = h;
+    $('hw-prev').onclick = function(){ S.hoursWeek = addDays(S.hoursWeek,-7); render(); };
+    $('hw-next').onclick = function(){ if(canNext){ S.hoursWeek = addDays(S.hoursWeek,7); render(); } };
+  }
+
+  /* ---------------- shell ---------------- */
+  $('tabs').addEventListener('click', function(e){ const b = e.target.closest('button[data-tab]'); if(!b) return; S.tab = b.dataset.tab; window.scrollTo(0,0); render(); });
+  async function signOut(){ try{ await sb.auth.signOut(); }catch(e){} }
+  $('signout').onclick = function(){ if(confirm('Sign out? You’ll need a new emailed code to get back in.')) signOut(); };
+
+  function subscribe(){
+    if(channel || !S.me) return;
+    let rt;
+    const reload = function(){ clearTimeout(rt); rt = setTimeout(loadData, 400); };
+    channel = sb.channel('staff-'+S.me.id)
+      .on('postgres_changes', {event:'*', schema:'public', table:'shifts'}, reload)
+      .on('postgres_changes', {event:'*', schema:'public', table:'shift_requests', filter:'staff_id=eq.'+S.me.id}, reload)
+      .on('postgres_changes', {event:'*', schema:'public', table:'shift_releases', filter:'staff_id=eq.'+S.me.id}, reload)
+      .on('postgres_changes', {event:'*', schema:'public', table:'time_off', filter:'staff_id=eq.'+S.me.id}, reload)
+      .on('postgres_changes', {event:'*', schema:'public', table:'punches', filter:'staff_id=eq.'+S.me.id}, reload)
+      .subscribe();
+  }
+  function startApp(){
+    show('screen-app');
+    $('main').innerHTML = '<div class="hint" style="text-align:center;margin-top:30px;">Loading your schedule…</div>';
+    loadData().then(subscribe);
+    clearInterval(tickTimer);
+    tickTimer = setInterval(function(){
+      const el = $('elapsed'), op = openPunch();
+      if(el && op) el.textContent = dur(punchMin(op));
+    }, 30000);
+  }
+  function stopApp(){
+    if(channel){ try{ sb.removeChannel(channel); }catch(e){} channel = null; }
+    clearInterval(tickTimer); S.me = null; S.shifts = []; S.punches = []; S.timeoff = []; S.checks = []; S.dayInfo = {};
+    show('screen-login'); showStep('email');
+  }
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden && S.me){ S.dayInfo = {}; loadData(); } });
+
+  let started = false;
+  sb.auth.onAuthStateChange(function(event, session){
+    setTimeout(function(){
+      if(session && session.user){ if(!started){ started = true; startApp(); } }
+      else { started = false; stopApp(); }
+    }, 0);
+  });
+  sb.auth.getSession().then(function(r){
+    const s = r && r.data ? r.data.session : null;
+    if(s && s.user){ if(!started){ started = true; startApp(); } } else { show('screen-login'); showStep('email'); }
+  });
+})();
+</script>
+</body>
+</html>
