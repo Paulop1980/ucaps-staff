@@ -32,6 +32,7 @@ Run in order in the Supabase SQL editor — each is safe to re-run:
 2. `sql/2_open_shift_requests_migration.sql` — open shifts staff can request
 3. `sql/3_shift_release_migration.sql` — staff ask to release a shift → becomes an open shift
 4. `sql/4_route_templates_update.sql` — enforcement shift templates from the July 2026 route guide
+5. `sql/5_clock_in_setting.sql` — per-person "Clocks in" setting (on for Parking Enforcement and Work Study / gate calls)
 
 Edge Function: `supabase/functions/staff-accounts` (deployed with JWT verification off; it checks the caller is a manager itself).
 

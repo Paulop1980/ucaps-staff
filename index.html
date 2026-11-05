@@ -1319,8 +1319,13 @@
   }
   // "Missed punch" only counts from the first day anyone clocked in with this app (go-live).
   function goLiveDate(){ let m = null; DB.punches.forEach(function(p){ const d = isoOf(new Date(p.clock_in)); if(!m || d<m) m = d; }); return m; }
+  // Who clocks in with the staff app (staff_members.requires_punch; before that column exists, everyone)
+  const PUNCH_GROUPS = ['Parking Events/Enforcement','Work Study Students'];
+  function punchDefaultFor(grp){ return PUNCH_GROUPS.indexOf(grp||'')!==-1; }
+  function clocksIn(m){ return !!m && m.requires_punch !== false; }
   function shiftClockState(s){
     if(!s.staff_id || !s.published) return null;
+    if(!clocksIn(memberById(s.staff_id))) return null;
     const ps = punchesFor(s.id);
     if(ps.length){
       const p = ps[0];
@@ -1834,7 +1839,7 @@
     shiftsIn.forEach(function(r){ const e = String(r['Work Email']||'').trim().toLowerCase(); if(e && r['Group'] && !grpOf[e]) grpOf[e] = String(r['Group']); });
     function want(name, email){
       email = String(email||'').trim().toLowerCase(); if(!email) return;
-      if(!byEmail[email] && !newMembers[email]) newMembers[email] = {name:String(name||email).trim(), email:email, grp:grpOf[email]||null, active:true};
+      if(!byEmail[email] && !newMembers[email]) newMembers[email] = {name:String(name||email).trim(), email:email, grp:grpOf[email]||null, active:true, requires_punch: punchDefaultFor(grpOf[email])};
     }
     shiftsIn.forEach(function(r){ want(r['Member'], r['Work Email']); });
     offIn.forEach(function(r){ want(r['Member'], r['Work Email']); });
@@ -1900,7 +1905,7 @@
       '<div class="modal-actions"><button class="btn" data-act="modal-close">Cancel</button><button class="btn primary" id="m-save">Import</button></div>';
     bindSave(async function(){
       const toAdd = Object.keys(newMembers).map(function(k){ return newMembers[k]; });
-      if($('imp-team').checked) teamOnly.forEach(function(r){ toAdd.push({name:String(r['Member']||'').trim()||r['Work Email'], email:String(r['Work Email']).trim().toLowerCase(), grp:null, active:true}); });
+      if($('imp-team').checked) teamOnly.forEach(function(r){ toAdd.push({name:String(r['Member']||'').trim()||r['Work Email'], email:String(r['Work Email']).trim().toLowerCase(), grp:null, active:true, requires_punch:false}); });
       if(toAdd.length){ const r = await dbInsertMany('members', toAdd, 'staff'); if(!r.ok) return; }
       DB.members.forEach(function(m){ byEmail[m.email] = m; });
       const tplIds = {};
@@ -2008,14 +2013,14 @@
     let h = '<div class="toolbar" style="margin-bottom:10px;"><span class="hint">People who can be scheduled. Adding someone here sets up their sign-in &mdash; they sign in to the staff app with a code emailed to them (no passwords, no self sign-up).</span><span style="flex:1"></span>'+
       '<button class="btn small ghost" data-act="acct-sync"'+(accountSync.busy?' disabled':'')+'>'+(accountSync.busy?'Setting up sign-ins…':'Check sign-in accounts')+'</button><button class="btn primary small" data-act="mem-add">+ Add staff member</button></div>'+
       (accountSync.error?'<div class="callout warn" style="margin-bottom:10px;">'+esc(accountSync.error)+'</div>':'')+
-      '<div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Email (sign-in)</th><th>Sign-in</th><th>Group</th><th class="num">Hrs this week</th><th>Last clock-in</th><th>Status</th><th></th></tr></thead><tbody>'+
+      '<div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Email (sign-in)</th><th>Sign-in</th><th>Clocks in</th><th>Group</th><th class="num">Hrs this week</th><th>Last clock-in</th><th>Status</th><th></th></tr></thead><tbody>'+
       (list.length ? list.map(function(m){
         const mins = DB.shifts.filter(function(s){ return s.staff_id===m.id && s.shift_date>=ws && s.shift_date<=addDays(ws,6); }).reduce(function(a,s){ return a+shiftMinutes(s); },0);
         const lp = DB.punches.filter(function(p){ return p.staff_id===m.id; }).sort(function(a,b){ return String(b.clock_in).localeCompare(String(a.clock_in)); })[0];
-        return '<tr'+(m.active?'':' class="muted"')+'><td><strong>'+esc(m.name)+'</strong>'+(m.title?'<span class="sub">'+esc(m.title)+'</span>':'')+'</td><td>'+esc(m.email)+'</td><td>'+(!m.active?'<span class="hint">—</span>':accountReady===null?'<span class="hint">…</span>':accountReady.has(m.email)?'<span class="pill ok">ready</span>':'<span class="pill warn">not set up</span>')+'</td><td>'+esc(grpLabel(m.grp))+'</td>'+
+        return '<tr'+(m.active?'':' class="muted"')+'><td><strong>'+esc(m.name)+'</strong>'+(m.title?'<span class="sub">'+esc(m.title)+'</span>':'')+'</td><td>'+esc(m.email)+'</td><td>'+(!m.active?'<span class="hint">—</span>':accountReady===null?'<span class="hint">…</span>':accountReady.has(m.email)?'<span class="pill ok">ready</span>':'<span class="pill warn">not set up</span>')+'</td><td>'+(clocksIn(m)?'<span class="pill blue">yes</span>':'<span class="hint">no</span>')+'</td><td>'+esc(grpLabel(m.grp))+'</td>'+
           '<td class="num">'+fmtHrs(mins)+'</td><td>'+(lp? fmtDate(isoOf(new Date(lp.clock_in)))+' '+fmtCheckedIn(lp.clock_in)+(lp.clock_out?'':' <span class="pill ok">on now</span>') : '<span class="hint">never</span>')+'</td>'+
           '<td>'+(m.active?'<span class="pill ok">active</span>':'<span class="pill example">inactive</span>')+'</td><td class="actions"><button class="btn small" data-act="mem-edit" data-id="'+m.id+'">Edit</button></td></tr>';
-      }).join('') : emptyRow('No staff yet.', 8))+'</tbody></table></div>';
+      }).join('') : emptyRow('No staff yet.', 9))+'</tbody></table></div>';
     const me = currentUser && currentUser.email ? currentUser.email.toLowerCase() : '';
     h += '<h3 style="margin:22px 0 4px;font-size:15px;">Parking Ops managers</h3><div class="hint" style="margin-bottom:8px;">These accounts have full access to this app (events, reservations, schedule, timesheets). Everyone else who signs in only sees the staff app. Managers still sign in here with their password.</div>'+
       '<div class="vip-add-row"><input type="email" id="adm-email" placeholder="name@uml.edu" aria-label="Manager email"><button class="btn small primary" data-act="adm-add">Add manager</button></div>'+
@@ -2028,20 +2033,25 @@
   }
   function openMemberForm(id){
     const existing = memberById(id);
-    const m = existing || {name:'', email:'', grp:schedGroup||'', title:'', phone:'', active:true, notes:''};
+    const m = existing || {name:'', email:'', grp:schedGroup||'', title:'', phone:'', active:true, notes:'', requires_punch: punchDefaultFor(schedGroup)};
     openModal('<h2>'+(existing?'Edit staff member':'Add staff member')+'</h2><div class="modal-sub">The email is how they sign in to the staff app (a code is emailed to it).</div>'+formErrorBox()+
       '<div class="grid cols-2">'+fld('mb-name','Name (Last, First)', inText('mb-name', m.name, 'Pai, Ishan'))+fld('mb-email','Email', inText('mb-email', m.email, 'first_last@student.uml.edu', ' type="email" autocomplete="off"'))+'</div>'+
       '<div class="grid cols-3">'+fld('mb-grp','Group', groupSelect('mb-grp', m.grp))+fld('mb-new','…or new group', inText('mb-new','', 'New group name'))+fld('mb-title','Title / role', inText('mb-title', m.title, 'e.g. Student enforcement'))+'</div>'+
       '<div class="grid cols-2">'+fld('mb-phone','Phone (optional)', inText('mb-phone', m.phone, ''))+'<div></div></div>'+
       fld('mb-notes','Notes', inArea('mb-notes', m.notes, 'Availability, class schedule, etc.'))+
       '<div class="checkrow"><input type="checkbox" id="mb-active"'+(m.active?' checked':'')+'><label for="mb-active">Active &mdash; can be scheduled and can sign in</label></div>'+
+      '<div class="checkrow"><input type="checkbox" id="mb-punch"'+(clocksIn(m)?' checked':'')+'><label for="mb-punch">Clocks in &mdash; shows the clock in/out button on their phone and tracks late / missed punches (default for Parking Enforcement and Work Study / gate calls)</label></div>'+
       modalActions({del:!!existing, save:'Save'}));
+    if(!existing){
+      const syncPunch = function(){ $('mb-punch').checked = punchDefaultFor(nz(val('mb-new')) || nz(val('mb-grp'))); };
+      $('mb-grp').addEventListener('change', syncPunch); $('mb-new').addEventListener('input', syncPunch);
+    }
     bindSave(async function(){
       const name = val('mb-name').trim(), email = val('mb-email').trim().toLowerCase();
       if(!name) return formError('Name is required.');
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return formError('Enter a valid email address.');
       if(DB.members.some(function(x){ return x.email===email && (!existing || x.id!==existing.id); })) return formError('Someone already has that email.');
-      const row = {name:name, email:email, grp: nz(val('mb-new')) || nz(val('mb-grp')), title:nz(val('mb-title')), phone:nz(val('mb-phone')), notes:nz(val('mb-notes')), active:$('mb-active').checked};
+      const row = {name:name, email:email, grp: nz(val('mb-new')) || nz(val('mb-grp')), title:nz(val('mb-title')), phone:nz(val('mb-phone')), notes:nz(val('mb-notes')), active:$('mb-active').checked, requires_punch:$('mb-punch').checked};
       const saved = existing ? await dbUpdate('members', existing.id, row, 'staff member') : await dbInsert('members', row, 'staff member');
       if(saved){ closeModal(); renderAll(); toast('Saved.'); if(saved.active) syncStaffAccounts(true); }
     });
@@ -2141,6 +2151,7 @@
     function row(id){ return rows[id] || (rows[id] = {staff_id:id, sched:0, schedLive:0, clocked:0, shifts:0, missed:0, late:0, open:0, days:{}}); }
     DB.shifts.forEach(function(s){
       if(!s.staff_id || !s.published || s.shift_date<start || s.shift_date>end) return;
+      if(!clocksIn(memberById(s.staff_id))) return;   // people who don't clock in aren't on the timesheet
       const r = row(s.staff_id); r.sched += shiftMinutes(s); if(live && s.shift_date>=live && shiftStartsAt(s) <= now) r.schedLive += shiftMinutes(s); r.shifts++;
       (r.days[s.shift_date] = r.days[s.shift_date] || {shifts:[], punches:[]}).shifts.push(s);
     });
@@ -2169,7 +2180,7 @@
     let h = '<div class="toolbar" style="margin-bottom:10px;">'+
       '<button class="btn small" data-act="ts-prev" aria-label="Earlier">&larr;</button><strong style="min-width:200px;text-align:center;">'+fmtDate(T.start)+' – '+fmtDate(T.end)+'</strong><button class="btn small" data-act="ts-next" aria-label="Later">&rarr;</button>'+
       '<select id="ts-weeks" aria-label="Length"><option value="1"'+(tsWeeks===1?' selected':'')+'>1 week</option><option value="2"'+(tsWeeks===2?' selected':'')+'>2 weeks</option></select>'+
-      '<span class="hint">Compare against what each person enters in HR Direct before approving. Flags: &gt;15 min difference, late (&gt;'+LATE_GRACE_MIN+' min), missed punch, still clocked in.</span>'+
+      '<span class="hint">Only staff set to <em>clock in</em> are listed (Staff tab). Compare against what each person enters in HR Direct before approving. Flags: &gt;15 min difference, late (&gt;'+LATE_GRACE_MIN+' min), missed punch, still clocked in.</span>'+
       '<span style="flex:1"></span><button class="btn small" data-act="ts-addpunch">+ Add punch</button><button class="btn small ghost" data-act="ts-csv">Export CSV</button></div>';
     h += '<div class="tbl-wrap"><table class="ts"><thead><tr><th>Staff</th><th class="num">Scheduled</th><th class="num">Clocked</th><th class="num" title="Clocked minus scheduled, counting shifts from the first day anyone clocked in with this app">Diff</th><th class="num">Shifts</th><th>Flags</th><th></th></tr></thead><tbody>';
     if(!T.rows.length) h += emptyRow('No scheduled shifts or punches in this period.', 7);

@@ -371,7 +371,9 @@
   function renderToday(){
     const t = todayStr(), op = openPunch(), mine = shiftsOn(t);
     let h = '<div class="hint" style="margin:0 2px 8px;">'+fmtDayLong(t)+'</div>';
-    // clock card
+    // clock card — only for people who clock in (Parking Enforcement, gate calls); an open punch always shows
+    const clocks = S.me.requires_punch !== false || !!op;
+    if(clocks){
     h += '<div class="card">';
     if(op){
       const s = S.shifts.find(function(x){ return x.id===op.shift_id; });
@@ -392,6 +394,7 @@
       h += '<button class="clockbtn in" id="clock-btn">Clock in</button>';
     }
     h += '<div class="hint" style="margin-top:8px;">Your location is saved with each punch if you allow it. Hours still go into HR Direct as usual.</div></div>';
+    }
 
     h += '<div class="card"><h2>Today on campus</h2>'+restrictionsHtml(S.dayInfo[t], mine)+'</div>';
     // shifts today
@@ -417,7 +420,7 @@
       h += '</div>';
     });
     $('main').innerHTML = h;
-    $('clock-btn').onclick = op ? clockOut : clockIn;
+    if($('clock-btn')) $('clock-btn').onclick = op ? clockOut : clockIn;
     if($('see-open')) $('see-open').onclick = function(){ S.tab = 'schedule'; window.scrollTo(0,0); render(); };
     document.querySelectorAll('[data-check]').forEach(function(cb){ cb.onchange = function(){ toggleCheck(this); }; });
   }
@@ -599,6 +602,7 @@
 
   function renderHours(){
     const t = todayStr();
+    const punchCols = S.me.requires_punch !== false;
     if(!S.hoursWeek) S.hoursWeek = weekStartOf(t);
     const ws = S.hoursWeek, we = addDays(ws, 6);
     let sched = 0, clocked = 0, rows = '';
@@ -607,14 +611,18 @@
       const sm = ss.reduce(function(a,s){ return a+shiftMin(s); },0), cm = ps.reduce(function(a,p){ return a+punchMin(p); },0);
       sched += sm; clocked += cm;
       if(!ss.length && !ps.length) continue;
+      if(!punchCols){ if(ss.length) rows += '<tr><td>'+fmtDay(d)+'</td><td>'+ss.map(function(x){ return esc(x.label||'Shift')+' · '+fmtRange(x.start_time,x.end_time); }).join('<br>')+'</td><td class="num">'+hrs(sm)+'</td></tr>'; continue; }
       rows += '<tr><td>'+fmtDay(d)+'</td><td>'+(ps.map(function(p){ return fmtClock(p.clock_in)+'–'+(p.clock_out?fmtClock(p.clock_out):'<em>now</em>')+(p.edited_by?' <span class="pill gray">fixed</span>':''); }).join('<br>')||'<span class="hint">no punch</span>')+'</td>'+
         '<td class="num">'+(sm?hrs(sm):'—')+'</td><td class="num">'+hrs(cm)+'</td></tr>';
     }
     const canNext = ws < weekStartOf(t);
-    let h = '<div class="card"><h2>My hours</h2><div class="hint">Use this when you enter your time in HR Direct. If a punch is wrong, tell your supervisor &mdash; they can fix it.</div>'+
+    let h = '<div class="card"><h2>My hours</h2><div class="hint">'+(punchCols?'Use this when you enter your time in HR Direct. If a punch is wrong, tell your supervisor &mdash; they can fix it.':'Your scheduled hours. You don&rsquo;t clock in with this app &mdash; enter your time in HR Direct as usual.')+'</div>'+
       '<div class="seg" style="margin-top:10px;"><button id="hw-prev">&larr; Earlier</button><button class="active" disabled>'+fmtDay(ws)+' – '+fmtDay(we)+'</button><button id="hw-next"'+(canNext?'':' disabled')+'>Later &rarr;</button></div>'+
-      '<table><thead><tr><th>Day</th><th>Punches</th><th class="num">Sched</th><th class="num">Clocked</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" class="hint">Nothing this week.</td></tr>')+'</tbody>'+
-      '<tfoot><tr><td colspan="2">Total</td><td class="num">'+hrs(sched)+'</td><td class="num">'+hrs(clocked)+'</td></tr></tfoot></table>'+
+      (punchCols
+        ? '<table><thead><tr><th>Day</th><th>Punches</th><th class="num">Sched</th><th class="num">Clocked</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" class="hint">Nothing this week.</td></tr>')+'</tbody>'+
+          '<tfoot><tr><td colspan="2">Total</td><td class="num">'+hrs(sched)+'</td><td class="num">'+hrs(clocked)+'</td></tr></tfoot></table>'
+        : '<table><thead><tr><th>Day</th><th>Shifts</th><th class="num">Sched</th></tr></thead><tbody>'+(rows||'<tr><td colspan="3" class="hint">Nothing this week.</td></tr>')+'</tbody>'+
+          '<tfoot><tr><td colspan="2">Total scheduled</td><td class="num">'+hrs(sched)+'</td></tr></tfoot></table>')+
       (ws < addDays(weekStartOf(t),-14) ? '<div class="hint" style="margin-top:8px;">Older weeks may be incomplete here &mdash; ask your supervisor.</div>' : '')+'</div>';
     $('main').innerHTML = h;
     $('hw-prev').onclick = function(){ S.hoursWeek = addDays(S.hoursWeek,-7); render(); };
