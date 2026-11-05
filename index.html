@@ -3637,9 +3637,9 @@
       '<button class="btn small ghost" data-act="board-fullscreen">Full screen</button></div></div>'+
       '<div class="board-header"><div class="board-date" id="board-label"></div><div class="board-clock" id="board-clock"></div></div></div>'+
       '<div class="board-section"><h3>Events &amp; lot notes</h3><div id="board-events"></div></div>'+
-      '<div class="board-section"><h3>On duty</h3><div id="board-duty"></div></div>'+
       '<div class="board-section"><h3>Active lot restrictions</h3><div id="board-impacts"></div></div>'+
-      '<div class="board-section"><h3>VIP reserved signage</h3><div id="board-signs"></div></div>';
+      '<div class="board-section"><h3>VIP reserved signage</h3><div id="board-signs"></div></div>'+
+      '<div class="board-section"><h3>On duty</h3><div id="board-duty"></div></div>';
     $('board-date').addEventListener('change', function(){ boardDate = this.value || todayStr(); boardFollowsToday = boardDate===todayStr(); renderBoard(); });
   }
   ACT['board-prev'] = function(){ boardDate = addDays(boardDate,-1); boardFollowsToday = boardDate===todayStr(); renderBoard(); };
