@@ -406,6 +406,9 @@
   .addbtn{position:absolute; right:3px; bottom:3px; width:20px; height:20px; border-radius:50%; border:1px solid var(--line); background:var(--surface); color:var(--ink-soft); font-size:14px; line-height:16px; cursor:pointer; opacity:0; padding:0;}
   table.sched td:hover .addbtn, .addbtn:focus{opacity:1;}
   @media (hover:none){ .addbtn{opacity:.7;} }
+  .sorthead{border:0; background:none; padding:0; font:inherit; color:inherit; text-transform:inherit; letter-spacing:inherit; cursor:pointer; white-space:nowrap;}
+  .sorthead:hover{color:var(--accent);}
+  .sorthead span{font-size:9px; margin-left:3px;}
   .chip .reqbadge.rel{background:var(--warn); color:#fff;}
   .chip .reqbadge{display:inline-block; margin-top:2px; font-size:10px; font-weight:700; background:var(--accent); color:var(--accent-ink); border-radius:4px; padding:0 5px;}
   .swatch{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:middle;}
@@ -3955,16 +3958,24 @@
       '<button class="btn primary" data-act="dep-add">+ Schedule deployment</button></div>'+
       '<div class="section-label">Sign inventory</div><div class="signs-grid" id="signs-grid"></div></div>'+
       '<div class="card"><div class="card-head"><h2>Deployment schedule</h2><div class="toolbar">'+
-      '<div class="checkrow" style="margin:0;"><input type="checkbox" id="dep-hide-collected"><label for="dep-hide-collected">Hide collected</label></div>'+
+      '<div class="checkrow" style="margin:0;"><input type="checkbox" id="dep-hide-collected" checked><label for="dep-hide-collected">Hide collected &amp; cancelled</label></div>'+
       '<select id="dep-status" aria-label="Status"><option value="">All statuses</option>'+options(['Scheduled','Deployed','Collected','Cancelled'],'')+'</select></div></div>'+
-      '<div class="tbl-wrap"><table><thead><tr><th>Lot</th><th>Event</th><th>Event date</th><th>Scheduled deploy</th><th>Scheduled collect</th><th>Sign #</th><th>Status</th><th></th></tr></thead><tbody id="dep-tbody"></tbody></table></div></div>';
+      '<div class="tbl-wrap"><table><thead><tr><th>Lot</th><th>Event</th><th>Event date</th><th><button type="button" class="sorthead" id="dep-sort" title="Sort by scheduled deploy date">Scheduled deploy <span id="dep-sort-arrow">&#9650;</span></button></th><th>Scheduled collect</th><th>Sign #</th><th>Status</th><th></th></tr></thead><tbody id="dep-tbody"></tbody></table></div></div>';
     $('dep-status').addEventListener('change', renderSigns);
-    try{ $('dep-hide-collected').checked = localStorage.getItem('ucaps-ops-hidecollected')==='1'; }catch(e){}
+    // Hides finished deployments (collected or cancelled); on unless this browser turned it off
+    try{ $('dep-hide-collected').checked = localStorage.getItem('ucaps-ops-hidedone')!=='0'; }catch(e){}
     $('dep-hide-collected').addEventListener('change', function(){
-      try{ localStorage.setItem('ucaps-ops-hidecollected', this.checked?'1':'0'); }catch(e){}
+      try{ localStorage.setItem('ucaps-ops-hidedone', this.checked?'1':'0'); }catch(e){}
+      renderSigns();
+    });
+    try{ depSortDesc = localStorage.getItem('ucaps-ops-depsort')==='desc'; }catch(e){}
+    $('dep-sort').addEventListener('click', function(){
+      depSortDesc = !depSortDesc;
+      try{ localStorage.setItem('ucaps-ops-depsort', depSortDesc?'desc':'asc'); }catch(e){}
       renderSigns();
     });
   }
+  let depSortDesc = false;   // Scheduled deploy: false = soonest first
   function signNumbers(){
     const nums = DB.signs.map(function(s){ return s.number; }).sort(function(a,b){ return a-b; });
     if(nums.length) return nums;
@@ -3996,10 +4007,17 @@
         (dep ? '<span class="pill warn">Deployed</span><br>'+esc(dep.lot) : '<span class="pill example">Storage</span>')+'</div></div>';
     }).join('');
     const st = val('dep-status');
-    const hideCollected = !!($('dep-hide-collected') && $('dep-hide-collected').checked);
-    let list = DB.deployments.slice().sort(byStr('scheduled_deploy_date'));
+    const hideDone = !!($('dep-hide-collected') && $('dep-hide-collected').checked);
+    // sort by scheduled deploy date; deployments with no date always go last
+    let list = DB.deployments.slice().sort(function(a,b){
+      const x = a.scheduled_deploy_date||'', y = b.scheduled_deploy_date||'';
+      if(!x || !y) return x ? -1 : y ? 1 : 0;
+      return depSortDesc ? y.localeCompare(x) : x.localeCompare(y);
+    });
+    const arrow = $('dep-sort-arrow'); if(arrow) arrow.innerHTML = depSortDesc ? '&#9660;' : '&#9650;';
     if(st) list = list.filter(function(d){ return d.status===st; });
-    if(hideCollected) list = list.filter(function(d){ return d.status!=='Collected'; });
+    // a status chosen in the filter always shows, even Collected / Cancelled
+    if(hideDone && !st) list = list.filter(function(d){ return d.status!=='Collected' && d.status!=='Cancelled'; });
     $('dep-tbody').innerHTML = list.length ? list.map(function(d){
       const ev = eventById(d.event_id);
       let actions;
@@ -4021,7 +4039,7 @@
         '<td style="white-space:nowrap;">'+fmtDate(d.scheduled_deploy_date)+(d.actual_deploy_date && d.actual_deploy_date!==d.scheduled_deploy_date?'<span class="sub">actual: '+fmtDate(d.actual_deploy_date)+'</span>':'')+'</td>'+
         '<td style="white-space:nowrap;">'+(d.scheduled_collect_date?fmtDate(d.scheduled_collect_date):'—')+(d.actual_collect_date?'<span class="sub">actual: '+fmtDate(d.actual_collect_date)+'</span>':'')+'</td>'+
         '<td>'+(d.sign_number?'#'+d.sign_number:'—')+'</td><td>'+statusPill(d.status)+'</td><td class="actions">'+actions+'</td></tr>';
-    }).join('') : '<tr><td colspan="8" class="empty-cell">No deployments'+(st?' with that status':' scheduled')+'. Click &ldquo;Schedule deployment&rdquo; to plan one.</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="empty-cell">No deployments'+(st?' with that status':(hideDone && DB.deployments.length?' still open (collected &amp; cancelled ones are hidden)':' scheduled'))+'. Click &ldquo;Schedule deployment&rdquo; to plan one.</td></tr>';
   }
   function deploymentForm(d, isNew){
     const lots = vipSignLots(); if(d.lot && lots.indexOf(d.lot)===-1) lots.push(d.lot);
